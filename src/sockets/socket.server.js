@@ -31,42 +31,45 @@ function initSocketServer(httpServer) {
   });
 
   io.on("connection", (socket) => {
-
     socket.on("ai-message", async (messagePayload) => {
       console.log(messagePayload); /* (chat , content) */
-      
 
       const message = await messageModel.create({
         chat: messagePayload.chat,
         user: socket.user._id,
         content: messagePayload.content,
-        role: "user", 
+        role: "user",
       });
 
       const vectors = await aiService.generateVector(messagePayload.content);
-      
+
       const memory = await queryMemory({
         queryVector: vectors,
         limit: 3,
-        metadata: {}, 
+        metadata: {user: socket.user._id},
       });
 
       await createMemory({
         vectors,
-        messageId: message._id, //unique id dena hoga har message ka 
+        messageId: message._id, //unique id dena hoga har message ka
         metadata: {
           chat: messagePayload.chat,
-          user: socket.user._id
+          user: socket.user._id,
         },
       });
 
       console.log(memory);
 
-      const chatHistory = (await messageModel.find({
-        chat: messagePayload.chat
-      }).sort({ createdAt: -1 }).limit(20).lean()).reverse(); //ye 20 limit tk yaad rakhega sort lagane se 
-        
-        
+      const chatHistory = (
+        await messageModel
+          .find({
+            chat: messagePayload.chat,
+          })
+          .sort({ createdAt: -1 })
+          .limit(20)
+          .lean()
+      ).reverse(); //ye 20 limit tk yaad rakhega sort lagane se
+
       // if (chatHistory.length == 0) {
       //   const response = await aiService.generateResponse(
       //     "array khali hai re developers",
@@ -82,13 +85,29 @@ function initSocketServer(httpServer) {
       //   );
       // }
 
-      const response = await aiService.generateResponse(
-        chatHistory.map((item) => {
-          return {
-            role: item.role,
-            parts: [{ text: item.content }]
-          };
-        }));
+      const stm = chatHistory.map((item) => {
+        return {
+          role: item.role,
+          parts: [{ text: item.content }],
+        };
+      });
+
+      const ltm = [
+        {
+          role: "user",
+          parts: [
+            {
+              text: `
+          these are some previous message from the chat, use them to generate a response${memory.map((item) => item.metadata.text).join("\n")}`,
+            },
+          ],
+        },
+      ];
+
+      console.log(ltm[0]);
+      console.log(stm);
+
+      const response = await aiService.generateResponse([...ltm,...stm]);
 
       const responseMessage = await messageModel.create({
         chat: messagePayload.chat,
@@ -104,14 +123,14 @@ function initSocketServer(httpServer) {
         messageId: responseMessage._id, //unique id dena hoga har message ka
         metadata: {
           chat: messagePayload.chat,
-          user: socket.user._id
+          user: socket.user._id,
         },
       });
 
       socket.emit("ai-response", {
         //iske through user ko response send kr deta hai ai
         content: response,
-        chat: messagePayload.chat
+        chat: messagePayload.chat,
       });
     });
   });
